@@ -179,15 +179,6 @@ end
 
 this_conf = mcmc_conf(1000,1,1)
 
-#result= Gibbs(rng, this_conf, lin, parameters)
-
-#plot(1:this_conf.iter, result[2,:])
-#plot(1:this_conf.iter,result[3,:])
-#test=zeros(1000)
-#for i=1:1000
-#	test[i] = InvScChisq(rng,10,0.5)
-#end
-#histogram(test,bins=100)
 struct matrix_linear_model
     Y::Matrix
     X::Matrix
@@ -239,9 +230,6 @@ function Gibbs_columns(rng, conf, matrix_linear_model, model_parameters)
     end
 	samples, (pip / conf.iter), beta
 end
-
-#result= Gibbs_columns(rng, this_conf, lin, parameters)
-#plot(1:this_conf.iter, result[2,:])
 
 
 table = Arrow.Table("/Users/Daniel/git/aurora/data/X_bamf_simulation.feather")
@@ -305,3 +293,5 @@ names_5=names(DataFrame(table))[findall(result[2] .> 0.5)]
 #println(intersect(names_1, names_2, names_3, names_4, names_5))
 
 samples_t = this_conf.iter * hcat(samples_1, samples_2, samples_3, samples_4, samples_5)
+samples_prob_t = sum(samples_t,dims=2) / (5*this_conf.iter)
+names_t = names(DataFrame(table))[findall(samples_prob_t .> 0.5)]

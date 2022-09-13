@@ -1,0 +1,15 @@
+name = "gibbs"
+uuid = "bd9213f4-a99e-44a7-93d9-25a1f5aa260a"
+authors = ["Daniel Trejo Banos <daniel.trejobanos@sdsc.ethz.ch>"]
+version = "0.1.0"
+
+[deps]
+Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+Impute = "f7bf1975-0170-51b9-8c5f-a992d46b9575"
+Infiltrator = "5903a43b-9cc3-4c30-8d17-598619ec4e9b"
+LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
+Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
