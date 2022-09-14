@@ -8,6 +8,7 @@ using Logging
 using DataFrames
 using Arrow
 using Impute
+using Statistics
 
 debuglogger = ConsoleLogger(stderr, Logging.Info)
 global_logger(debuglogger)
@@ -130,27 +131,6 @@ function bayesR!(rng, parameters::spike_slab, X, epsilon, beta, sigmaE, sigmaG, 
 	mixture[1]
 end
 
-
-rng = MersenneTwister(1234)
-M_0 = 100
-N = 10000 # number of individuals
-M = 200 # total number of SNP
-
-G = rand(rng, Binomial(2, 0.2), N,M)
-beta = zeros(M)
-beta[1:M_0] = rand(rng, Normal(0,sqrt(0.6/M_0)), M_0)
-
-dt = fit(ZScoreTransform, convert( Matrix{Float64},G), dims=2)
-X = StatsBase.transform(dt,convert( Matrix{Float64},G))
-
-g = X *  beta # same as scale(G) %*% beta
-e = rand(rng, Normal(0, sqrt(0.4) ), N)
-y = g + e
-
-parameters = spike_slab(0.001, 0.001, 0.001, 0.001, 0.001, 0.001,M ,N, [0.001,0.1,1])
-mcmc = mcmc_conf(10000, 100,1)
-lin = linear_model(y,X)
-
 function Gibbs(rng, conf, linear_model, model_parameters)
     epsilon = deepcopy(linear_model.y)
     beta = (sqrt(0.5)/model_parameters.M) * ones(model_parameters.M)
@@ -177,7 +157,6 @@ function Gibbs(rng, conf, linear_model, model_parameters)
 	samples
 end
 
-this_conf = mcmc_conf(1000,1,1)
 
 struct matrix_linear_model
     Y::Matrix
@@ -185,9 +164,7 @@ struct matrix_linear_model
 	p::Int
 end
 
-this_conf = mcmc_conf(100,1,1)
 
-lin = matrix_linear_model(repeat(y,1,3),X,3)
 function Gibbs_columns(rng, conf, matrix_linear_model, model_parameters)
     epsilon = zeros(model_parameters.N)
     beta = (sqrt(0.5)/model_parameters.M) * ones(model_parameters.M)
@@ -195,14 +172,17 @@ function Gibbs_columns(rng, conf, matrix_linear_model, model_parameters)
     sigmaG = Ref{Float64}(0.5)
 	K = size(model_parameters.mixture,1)
     pi_vec = rand(rng,Dirichlet(ones(K + 1)))
-    samples = zeros(3, convert(Int64,ceil(conf.iter / conf.thin)))
+    total_samples = conf.iter - conf.burnin
+    samples = zeros(3, convert(Int64,ceil(total_samples / conf.thin)))
 	samples[1,1]=sigmaE[]
 	samples[2,1]=sigmaG[]
 	samples[3,1] = 0
 	markerI = Vector(1:model_parameters.M)
 	m0 = 0
 	pip = zeros(model_parameters.M)
-    for i = 2:conf.iter
+    beta_samples = zeros(model_parameters.M, total_samples)
+    k = 0
+    for i = 2: conf.iter
 		for j = 1:1
 			epsilon = matrix_linear_model.Y[:,j] + epsilon
 			current_shuffle = shuffle(rng,markerI[1:end .!= j])
@@ -223,75 +203,120 @@ function Gibbs_columns(rng, conf, matrix_linear_model, model_parameters)
 		@debug "sigmaE: $(sigmaE[])"
 		@debug "sigmaG: $(sigmaG[])"
 		@debug "VE: $(sigmaG[]/(sigmaG[]+sigmaE[]))"
-        samples[3,i] = m0
-        samples[1,i] = sigmaE[]
-        samples[2,i] = sigmaG[]
-		pip = pip + (beta .> 0)
+        if (i > conf.burnin)
+            k += 1
+            samples[3,k] = m0
+            samples[1,k] = sigmaE[]
+            samples[2,k] = sigmaG[]
+            beta_samples[:,k] = beta
+            pip = pip + (beta .> 0)
+        end
     end
-	samples, (pip / conf.iter), beta
+	samples, (pip / k), beta_samples
 end
 
+input_file = "/Users/Daniel/git/aurora/data/X_bamf_simulation.feather"
+output_path = "/Users/Daniel/git/aurora/data"
 
-table = Arrow.Table("/Users/Daniel/git/aurora/data/X_bamf_simulation.feather")
+
+
+@info "Starting Gibbs"
+@info "Reading data from: $input_file"
+@info "output_path: $output_path"
+table = Arrow.Table(input_file)
+
+@info "table loaded"
 table=DataFrame(table)
 table=table[:,2:end]
-krakow_1d = Matrix(table)
 
-imputed = Impute.impute(krakow_1d, Impute.Substitute(; statistic=mean); dims=:cols)
+matrix_data = Matrix(table)
+
+imputed = Impute.impute(matrix_data, Impute.Substitute(; statistic=mean); dims=:cols)
 dt = fit(ZScoreTransform, identity.(imputed), dims=1)
 dt = StatsBase.transform(dt, identity.(imputed))
+@info "Calculating the correlation matrix"
+correlation_matrix = cor(dt)
+mean_cor = mean(correlation_matrix, dims=2)
+
 M = size(dt)[2]
+@info "M: $M"
 N =size(dt)[1]
-lin = matrix_linear_model(dt,dt,91)
-this_conf = mcmc_conf(5000,1,1)
-parameters = spike_slab(0.001, 0.001, 458, 1.0/M, 0.001, 0.001,M ,N, [1])
-result= Gibbs_columns(rng, this_conf, lin, parameters)
-samples = result[1]
-samples_1 = result[2]
-plot(1:this_conf.iter, samples[2,:])
-bar(result[2])
-plot(1:this_conf.iter, samples[3,:])
+@info "N: $N"
+lin = matrix_linear_model(dt,dt,M)
+@info "linear model created"
+iters=5000
+@info "iters: $iters"
+burnin=1000
+@info "burnin: $burnin"
+thin=1
+@info "thin: $thin"
+this_conf = mcmc_conf(iters,thin,burnin)
+@info "conf created"
+parameters = spike_slab(0.001, 0.001, N, 1.0/M, 0.001, 0.001,M ,N, [1])
+@info "parameters created"
+seed = 439813
+@info "seed: $seed"
+rng = MersenneTwister(seed)
+@info "rng created"
+@info "Starting Gibbs chain 1"
+@time samples_1, pip_1, beta_1 = Gibbs_columns(rng, this_conf, lin, parameters)
 
-names_1 = names(DataFrame(table))[findall(result[2] .> 0.5)]
+@info "Starting Gibbs chain 2"
+@time samples_2, pip_2, beta_2 = Gibbs_columns(rng, this_conf, lin, parameters)
 
-result= Gibbs_columns(rng, this_conf, lin, parameters)
-samples = result[1]
-samples_2 = result[2]
-plot(1:this_conf.iter, samples[2,:])
-bar(result[2])
-plot(1:this_conf.iter, samples[3,:])
-names(DataFrame(table))[findall(result[2] .> 0.5)]
-names_2=names(DataFrame(table))[findall(result[2] .> 0.5)]
+@info "Starting Gibbs chain 3"
+@time samples_3, pip_3, beta_3 = Gibbs_columns(rng, this_conf, lin, parameters)
 
-result= Gibbs_columns(rng, this_conf, lin, parameters)
-samples = result[1]
-samples_3 = result[2]
-plot(1:this_conf.iter, samples[2,:])
-bar(result[2])
-plot(1:this_conf.iter, samples[3,:])
-names(DataFrame(table))[findall(result[2] .> 0.5)]
-names_3=names(DataFrame(table))[findall(result[2] .> 0.5)]
+@info "Starting Gibbs chain 4"
+@time samples_4, pip_4, beta_4 = Gibbs_columns(rng, this_conf, lin, parameters)
 
-result= Gibbs_columns(rng, this_conf, lin, parameters)
-samples = result[1]
-samples_4 = result[2]
-plot(1:this_conf.iter, samples[2,:])
-bar(result[2])
-plot(1:this_conf.iter, samples[3,:])
-names(DataFrame(table))[findall(result[2] .> 0.5)]
-names_4=names(DataFrame(table))[findall(result[2] .> 0.5)]
+@info "Starting Gibbs chain 5"
+@time samples_5, pip_5, beta_5 = Gibbs_columns(rng, this_conf, lin, parameters)
+
+total_samples = this_conf.iter - this_conf.burnin
+
+samples_t = (total_samples /this_conf.thin )* hcat(pip_1, pip_2, pip_3, pip_4, pip_5)
+samples_prob_t = sum(samples_t,dims=2) / (5*total_samples)
+names_t = names(DataFrame(table))
+samples_prob_df = DataFrame(amu= names_t,  probability=samples_prob_t[:,1], mean_cor=mean_cor[:,1])
 
 
-result= Gibbs_columns(rng, this_conf, lin, parameters)
-samples = result[1]
-samples_5 = result[2]
-plot(1:this_conf.iter, samples[2,:])
-bar(result[2])
-plot(1:this_conf.iter, samples[3,:])
-names(DataFrame(table))[findall(result[2] .> 0.5)]
-names_5=names(DataFrame(table))[findall(result[2] .> 0.5)]
-#println(intersect(names_1, names_2, names_3, names_4, names_5))
+output_prob = output_path * "/" * "samples_prob_df.feather"
+@info "Writing total probabilities to: $output_prob"
+Arrow.write(output_prob, samples_prob_df)
 
-samples_t = this_conf.iter * hcat(samples_1, samples_2, samples_3, samples_4, samples_5)
-samples_prob_t = sum(samples_t,dims=2) / (5*this_conf.iter)
-names_t = names(DataFrame(table))[findall(samples_prob_t .> 0.5)]
+pip_t = [pip_1, pip_2, pip_3, pip_4, pip_5]
+samples_t = [samples_1, samples_2, samples_3, samples_4, samples_5]
+beta_t = [beta_1, beta_2, beta_3, beta_4, beta_5]
+for i=1:5
+    local output_samples = output_path * "/" * "samples_$(i).feather"
+    @info "Writing data to: $output_samples"
+    local samples_df = DataFrame(samples_t[i]', :auto)
+    rename!(samples_df, Symbol.(["sigmaE", "sigmaG", "m0"]))
+    Arrow.write(output_samples, samples_df)
+
+    local output_pip = output_path * "/" * "pip_$(i).feather"
+    @info "Writing data to: $output_pip"
+    local pip_df = DataFrame(pip_t[i]', :auto)
+    rename!(pip_df, names_t)
+    Arrow.write(output_pip, pip_df)
+
+    local output_beta = output_path * "/" * "beta_$(i).feather"
+    @info "Writing data to: $output_beta"
+    local beta_df = DataFrame(beta_t[i]', :auto)
+    rename!(beta_df, names_t)
+    Arrow.write(output_beta, beta_df)
+end
+
+@info "calculating pareto front"
+df = DataFrame(amu=names_t, x=samples_prob_t[:,1], y= 1 .- mean_cor[:,1])
+sort!(df,[:x, :y] ,rev=true);
+
+pareto = df[1:1, :];
+
+foreach(row -> row.y > pareto.y[end] && push!(pareto, row), eachrow(df));
+
+@info "writing pareto front"
+output_pareto = output_path * "/" * "pareto.feather"
+@info "Writing data to: $output_pareto"
+Arrow.write(output_pareto, pareto)
