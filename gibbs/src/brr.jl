@@ -9,6 +9,7 @@ using DataFrames
 using Arrow
 using Impute
 using Statistics
+using ArgParse
 
 debuglogger = ConsoleLogger(stderr, Logging.Info)
 global_logger(debuglogger)
@@ -215,8 +216,23 @@ function Gibbs_columns(rng, conf, matrix_linear_model, model_parameters)
 	samples, (pip / k), beta_samples
 end
 
-input_file = "/Users/Daniel/git/aurora/data/X_bamf_simulation.feather"
-output_path = "/Users/Daniel/git/aurora/data"
+s = ArgParseSettings()
+@add_arg_table s begin
+    "input"
+        help = "input file"
+        required = true
+    "output"
+        help = "output file"
+        required = true
+end
+
+parsed_args = parse_args(ARGS, s)
+
+input_file = parsed_args["input"]
+output_path = parsed_args["output"]
+
+# input_file = "/Users/Daniel/git/aurora/data/X_bamf_simulation.feather"
+# output_path = "/Users/Daniel/git/aurora/data"
 
 
 
